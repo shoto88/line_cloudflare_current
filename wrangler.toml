@@ -21,7 +21,12 @@ compatibility_date = "2023-12-01"
 # binding = "AI"
 
 compatibility_flags = [ "nodejs_compat" ]
-
+[triggers]
+crons = [
+  "59 14 * * *",       # JST 23:59に実行（UTC 14:59、翌日0時前）
+  "20 4 * * 2-6",      # JST 13:20に実行（平日：月-金）
+  "0 22 * * 1"         # JST 月曜7:00に実行（UTC 22:00 日曜）
+]
 [[d1_databases]]
 binding = "DB" # i.e. available in your Worker on env.DB
 database_name = "db_20"
