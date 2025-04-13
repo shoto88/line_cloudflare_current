@@ -19,19 +19,18 @@ async function getStatusMessage(env: Bindings, waitingNumber: number, currentNum
   const estimatedTimeString = format(estimatedTime, "HH:mm", { locale: ja });
   const estimatedMinutesString = `(約${Math.round(estimatedWaitingTime)}分後)`;
 
-  // 日曜診療日を取得
-  const { results: sundayDates } = await env.DB.prepare(
-    'SELECT date FROM sunday_clinics ORDER BY date LIMIT 2'
-  ).all<SundayClinic>();
-
+  // 固定の最後の日曜診療日（4月20日）
+  const lastSundayClinic = new Date("2025-04-20");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
   // 日付を日本語表示用にフォーマット
-  const formattedDates = sundayDates.map(row => 
-    format(new Date(row.date), 'M月d日', { locale: ja })
-  );
-
-  const sundayMessage = formattedDates.length === 2
-    ? `月2回、日曜日診療しています(10時〜15時)\n次回の日曜診療日：${formattedDates.join(',')}` 
-    : '月2回、日曜日診療しています(10時〜15時)';
+  const formattedDate = format(lastSundayClinic, 'M月d日', { locale: ja });
+  
+  // 4月20日以降は「日曜診療は終了しました」と表示
+  const sundayMessage = today <= lastSundayClinic 
+    ? `次回の日曜診療日：${formattedDate}` 
+    : '日曜診療は終了しました';
 
   const flexMessage = {
     "type": "flex",
@@ -272,12 +271,12 @@ function getTicketMessage(waitingNumber: number, currentNumber: number, averageT
             "wrap": true,
             "margin": "md"
           },
-          // {
-          //   "type": "text",
-          //   "text": `今発券すると約${Math.round(estimatedWaitingTime)}分後に順番です。`,
-          //   "wrap": true,
-          //   "margin": "sm",
-          // },
+          {
+            "type": "text",
+            "text": `今発券すると約${Math.round(estimatedWaitingTime)}分後に順番です。`,
+            "wrap": true,
+            "margin": "sm",
+          },
           {
             "type": "separator",
             "margin": "xl"
@@ -545,19 +544,18 @@ function getTicketMessage(waitingNumber: number, currentNumber: number, averageT
     return [flexMessage];
   }
   async function getHoursMessage(env: Bindings): Promise<any[]> {
-    // 日曜診療日を取得
-    const { results: sundayDates } = await env.DB.prepare(
-      'SELECT date FROM sunday_clinics ORDER BY date LIMIT 2'
-    ).all<SundayClinic>();
-
+    // 固定の最後の日曜診療日（4月20日）
+    const lastSundayClinic = new Date("2025-04-20");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
     // 日付を日本語表示用にフォーマット
-    const formattedDates = sundayDates.map(row => 
-      format(new Date(row.date), 'M月d日', { locale: ja })
-    );
-
-    const sundayMessage = formattedDates.length > 0
-      ? `次回日曜診療日：${formattedDates.join(',')}`
-      : '次回の日曜診療日は未定です';
+    const formattedDate = format(lastSundayClinic, 'M月d日', { locale: ja });
+    
+    // 4月20日以降は「日曜診療は終了しました」と表示
+    const sundayMessage = today <= lastSundayClinic 
+      ? `次回の日曜診療日：${formattedDate}` 
+      : '日曜診療は終了しました';
 
     const flexMessage = {
       "type": "flex",
@@ -603,7 +601,7 @@ function getTicketMessage(waitingNumber: number, currentNumber: number, averageT
                     },
                     {
                       "type": "text",
-                      "text": "00:00〜12:20 (午前)\n13:20〜18:20 (午後)",
+                      "text": "00:00〜11:50 (午前)\n12:50〜17:50 (午後)",
                       "wrap": true,
                       "color": "#111111",
                       "size": "sm",
@@ -625,7 +623,7 @@ function getTicketMessage(waitingNumber: number, currentNumber: number, averageT
                     },
                     {
                       "type": "text",
-                      "text": "00:00〜14:30",
+                      "text": "00:00〜14:20",
                       "wrap": true,
                       "color": "#111111",
                       "size": "sm",
@@ -647,7 +645,7 @@ function getTicketMessage(waitingNumber: number, currentNumber: number, averageT
                     },
                     {
                       "type": "text",
-                      "text": "00:00〜14:30",
+                      "text": "00:00〜14:20",
                       "wrap": true,
                       "color": "#111111",
                       "size": "sm",
@@ -732,7 +730,7 @@ function getHolidayMessage(): any[] {
                         },
                         {
                           "type": "text",
-                          "text": "00:00 - 12:20 / 13:20 - 18:20",
+                          "text": "00:00 - 11:50 / 12:50 - 17:50",
                           "wrap": true,
                           "color": "#666666",
                           "size": "sm",
@@ -754,7 +752,7 @@ function getHolidayMessage(): any[] {
                         },
                         {
                           "type": "text",
-                          "text": "00:00 - 14:30",
+                          "text": "00:00 - 14:20",
                           "wrap": true,
                           "color": "#666666",
                           "size": "sm",

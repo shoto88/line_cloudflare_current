@@ -16,6 +16,8 @@ import {
   getWaitingNumbersMessage
 } from "./flexMessages"; 
 import { ja } from 'date-fns/locale';
+// Cloudflare Workersの型をインポート
+import { ExportedHandlerScheduledHandler } from '@cloudflare/workers-types';
 // 環境変数(secret)の定義
 type Bindings = {
     LINE_CHANNEL_ACCESS_TOKEN: string
@@ -203,7 +205,7 @@ const textEventHandler = async (event: webhook.Event, client: messagingApi.Messa
       const messages = await getStatusMessage(c.env, waitingCount, treatmentCount, averageTime);
       await client.replyMessage({
           replyToken: event.replyToken as string,
-          messages: messages,
+          messages,
       });
   } else if (action === "ACTION_TICKET") {
       const systemStatusResult = await c.env.DB.prepare('SELECT value FROM status').first();
@@ -326,10 +328,30 @@ const textEventHandler = async (event: webhook.Event, client: messagingApi.Messa
           });
       }
   } else if (action === "ACTION_TICKET_CANCEL") {
-      const messages: any[] = [{
-          type: "text",
-          text: "発券をキャンセルしました。"
-      }];
+      // ユーザーがすでに発券済みかどうかをチェック
+      const userId = event.source?.userId;
+      const result = await c.env.DB.prepare(
+          'SELECT EXISTS(SELECT 1 FROM tickets WHERE line_user_id = ?) AS already_ticketed'
+      )
+          .bind(userId)
+          .first();
+
+      let messages: any[];
+      
+      if (result && result.already_ticketed === 1) {
+          // すでに発券済みの場合
+          messages = [{
+              type: "text",
+              text: "システム上、発券番号は残りますがキャンセルは承っております。またご都合の良い時にご来院をお待ちしております。"
+          }];
+      } else {
+          // 未発券の場合
+          messages = [{
+              type: "text",
+              text: "発券をキャンセルしました。"
+          }];
+      }
+      
       await client.replyMessage({
           replyToken: event.replyToken as string,
           messages,
@@ -1528,12 +1550,12 @@ app.put('/api/trigger-system-on', apiKeyAuthMiddleware, async (c) => {
     const minute = japanTime.getMinutes();
     const formattedDate = format(japanTime, 'yyyy-MM-dd');
 
-    console.log('Debug info:', {
-      japanTime: japanTime.toISOString(),
-      dayOfWeek,
+    console.log('Cron実行開始:', {
+      UTC: now.toISOString(),
+      JST: japanTime.toISOString(),
+      formattedDate,
       hour,
-      minute,
-      formattedDate
+      minute
     });
 
     // 休診日チェック - D1データベースから取得
@@ -1629,7 +1651,7 @@ app.delete('/api/closed-days/:id', apiKeyAuthMiddleware, async (c) => {
     return c.json({ error: 'Failed to remove closed date' }, 500);
   }
 });
-const scheduled: ExportedHandlerScheduledHandler<Bindings> = async (event, env, ctx) => {
+const scheduled: ExportedHandlerScheduledHandler<Bindings> = async (event: any, env, ctx) => {
   try {
     const now = new Date();
     const japanTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
@@ -1637,8 +1659,9 @@ const scheduled: ExportedHandlerScheduledHandler<Bindings> = async (event, env, 
     const hour = japanTime.getHours();
     const minute = japanTime.getMinutes();
 
+    const cronPattern: string = event.cron;
     console.log('Cron実行開始:', {
-      cron: event.cron,
+      cron: cronPattern,
       UTC: now.toISOString(),
       JST: japanTime.toISOString(),
       formattedDate,
@@ -1646,10 +1669,47 @@ const scheduled: ExportedHandlerScheduledHandler<Bindings> = async (event, env, 
       minute
     });
 
-    switch (event.cron) {
-      case "59 14 * * *":    // JST 23:59 (UTC 14:59) 翌日0時前
-      case "20 4 * * 2-6":   // JST 13:20 (UTC 04:20) 平日（月-金）
-        // 休診日チェック
+    switch (cronPattern) {
+      case "59 14 * * *": {   // JST 23:59 (UTC 14:59) 翌日0時前
+        // 23:59実行時は翌日の日付で休診日チェック
+        const tomorrow = new Date(japanTime);
+        tomorrow.setDate(tomorrow.getDate() + 1); // 翌日の日付を計算
+        const tomorrowDate = format(tomorrow, 'yyyy-MM-dd');
+        
+        // 休診日チェック（翌日の日付で）
+        const { results: closedDays } = await env.DB.prepare(
+          'SELECT date FROM closed_days WHERE date = ?'
+        ).bind(tomorrowDate).all();
+
+        if (closedDays.length > 0) {
+          console.log(`${tomorrowDate} は休診日のため、予約開始しません`);
+          return;
+        }
+
+        const currentStatus = await env.DB.prepare(
+          'SELECT id, value FROM status WHERE id = 1'
+        ).first();
+
+        if (currentStatus?.value === 0) {
+          console.log('既に予約開始状態（0）です');
+          return;
+        }
+
+        const updateResult = await env.DB.prepare(
+          'UPDATE status SET value = 0 WHERE id = 1'
+        ).run();
+
+        console.log('更新結果:', {
+          success: true,
+          meta: updateResult.meta
+        });
+
+        console.log(`${tomorrowDate} の予約受付を開始しました`);
+        break;
+      }
+      
+      case "20 4 * * 2-6": {  // JST 13:20 (UTC 04:20) 平日（月-金）
+        // 平日13:20実行時は当日の日付で休診日チェック
         const { results: closedDays } = await env.DB.prepare(
           'SELECT date FROM closed_days WHERE date = ?'
         ).bind(formattedDate).all();
@@ -1679,9 +1739,14 @@ const scheduled: ExportedHandlerScheduledHandler<Bindings> = async (event, env, 
 
         console.log(`${formattedDate} の予約受付を開始しました`);
         break;
+      }
       
       case "0 22 * * 1":     // JST 月曜7:00 (UTC 22:00 日曜)
         await updateSundayClinics(env);
+        break;
+      
+      case "45 14 * * *":     // JST 23:45に実行（UTC 14:45、毎日リセット）
+        await performDailyReset(env);
         break;
       
       default:
@@ -1768,6 +1833,36 @@ app.post('/api/sunday-clinics/update', apiKeyAuthMiddleware, async (c) => {
     return c.json({ error: 'Failed to update sunday clinic dates' }, 500);
   }
 });
+
+// 毎日のリセット関数
+async function performDailyReset(env: Bindings) {
+  try {
+    console.log('23:45のデイリーリセットを開始します...');
+    
+    // バッチ処理（トランザクション）として実行
+    await env.DB.batch([
+      // 1. counterテーブルのリセット (reset-counter相当)
+      env.DB.prepare('UPDATE counter SET value = 0 WHERE name = ?').bind('waiting'),
+      env.DB.prepare('UPDATE counter SET value = 0 WHERE name = ?').bind('treatment'),
+      
+      // 2. ticketsテーブルのリセット (reset-tickets相当)
+      env.DB.prepare('DELETE FROM tickets'),
+      
+      // 3. queue_statusテーブルのリセット (reset-queue-status相当)
+      env.DB.prepare('DELETE FROM queue_status')
+    ]);
+    
+    console.log('カウンターをリセットしました');
+    console.log('チケットをリセットしました');
+    console.log('キューステータスをリセットしました');
+    console.log('デイリーリセットが正常に完了しました');
+    
+  } catch (error) {
+    console.error('デイリーリセットに失敗:', error);
+    throw error;
+  }
+}
+
 // エクスポート形式を修正
 export default {
   fetch: app.fetch,

@@ -25,7 +25,8 @@ compatibility_flags = [ "nodejs_compat" ]
 crons = [
   "59 14 * * *",       # JST 23:59に実行（UTC 14:59、翌日0時前）
   "20 4 * * 2-6",      # JST 13:20に実行（平日：月-金）
-  "0 22 * * 1"         # JST 月曜7:00に実行（UTC 22:00 日曜）
+  "0 22 * * 1",        # JST 月曜7:00に実行（UTC 22:00 日曜）
+  "45 14 * * *"        # JST 23:45に実行（UTC 14:45、毎日リセット）
 ]
 [[d1_databases]]
 binding = "DB" # i.e. available in your Worker on env.DB
